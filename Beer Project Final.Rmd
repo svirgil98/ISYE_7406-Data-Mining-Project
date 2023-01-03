@@ -1,0 +1,613 @@
+---
+title: "Beer Project"
+author: "Group 33"
+date: "4/3/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+## Appendix
+Set Up Workspace
+```{r}
+## Import Libs ##
+library(devtools)
+library(tidyverse)
+library(corrplot)
+library(corrgram)
+library(cluster)
+library(factoextra)
+library(tidytext)
+library(tm)
+library(wordcloud)
+library(broom)
+library(RColorBrewer)
+library(gridExtra)
+library(ggpubr)
+library(stringr)
+library(caTools)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(gbm)
+library(caret)
+library(directlabels)
+library(psych)
+library(MASS)
+library(neuralnet)
+library(nnet)
+library(ggplot2)
+library(nnet)
+library(e1071)
+library(dplyr)
+library(kernlab)
+library(cluster)
+library(ggfortify)
+library(plotly)
+library(plyr)
+#################
+# Set working directory!
+#setwd("D:/School/ISYE 7406")
+setwd("C:/Users/zdune/Desktop/isye7406/project")
+primary_col=c("#B3A369","#003057","#FFFFFF")
+secondary_col=c("#54585A","#D6DBD4","#F9F6E5","#EAAA00")
+tertiary_col=c("#5F249F","#64CCC9","#FFCD00","#3A5DAE","#A4D233","#E04F39","#008C95")
+theme_gt <- function (){
+  
+  theme_minimal() %+replace%
+    
+    theme(
+      
+      #grid elements
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      axis.ticks = element_line(
+        color = primary_col[1]),
+      
+      #text elements
+      plot.title = element_text(  #title
+        size = 20,                #set font size
+        color = primary_col[1],   #Set font color
+        face = 'bold',            #bold typeface
+        hjust = 0,                #left align
+        vjust = 2),               #raise slightly
+      
+      plot.subtitle = element_text(#subtitle
+        color = primary_col[2],    #Set font color
+        size = 14,                 #font size
+        hjust=0,
+        vjust=1),               
+      
+      plot.caption = element_text(#caption
+        color = secondary_col[1], #Set font color
+        size = 9,                 #font size
+        hjust = 1),               #right align
+      
+      axis.title = element_text(  #axis titles
+        color = primary_col[1],   #Set font color
+        face = 'bold',
+        size = 10),               #font size
+      
+      axis.text = element_text(   #axis text
+        color = primary_col[1],   #Set font color
+        size = 9),                #font size
+      
+      axis.text.x = element_text( #margin for axis text
+        color = primary_col[1],   #Set font color
+        margin=ggplot2::margin(5, b = 10)),
+      
+      #border elements
+      axis.line = element_line(
+        color = primary_col[1])
+      
+    )
+  
+}
+```
+
+Importing and Preparing Data 
+
+```{r}
+### Import Data #####
+
+data<-read.csv("recipeData.csv") %>%
+  mutate(StyleID=as.factor(StyleID), Style=as.factor(Style), BrewMethod=as.factor(BrewMethod))
+data[data=="N/A"]<-NA
+data<-data %>%dplyr::select(-BeerID,-URL,-UserId)
+
+
+rem<-names(which(colSums(is.na(data))>0))
+
+data.clean<-data%>%dplyr::select(-Name, -Style, -BoilGravity, -MashThickness, -PitchRate, -PrimaryTemp, -PrimingMethod, -PrimingAmount)
+data.clean<-data.clean %>% mutate(Size.Change=BoilSize/Size.L.,
+                                  G.Change=OG/FG)
+
+####dist#####
+
+f1<-data.clean %>% ggplot(aes(y=G.Change))+
+  geom_boxplot(fill=primary_col[2])+
+  theme_gt()+
+  theme(legend.position = "none")
+f2<-data.clean %>% ggplot(aes(y=ABV))+
+  geom_boxplot(fill=primary_col[2])+
+  theme_gt()+
+  theme(legend.position = "none")
+f3<-data.clean %>% ggplot(aes(y=Color))+
+  geom_boxplot(fill=primary_col[2])+
+  theme_gt()+
+  theme(legend.position = "none")
+f4<-data.clean %>% ggplot(aes(y=IBU))+
+  geom_boxplot(fill=primary_col[2])+
+  theme_gt()+
+  theme(legend.position = "none")
+f5<-data.clean %>% ggplot(aes(y=Size.Change))+
+  geom_boxplot(fill=primary_col[2])+
+  theme_gt()+
+  theme(legend.position = "none")
+f6<-data.clean %>% ggplot(aes(y=BoilTime))+
+  geom_boxplot(fill=primary_col[2])+
+  theme_gt()+
+  theme(legend.position = "none")
+
+
+ggarrange(f1,f2,f3,f4,f5,f6, ncol=3,nrow=2)
+ggsave("with outlier.png",width = 5, height = 4)
+
+## data.clean <- cleaned data
+## data.clean.rm.out <- outliers removed
+data.clean.rm.out<-data.clean[-c(73018,6569),]
+
+groups_data <- read.csv("styleData_G.csv")
+groups_data$StyleID <- factor(groups_data$StyleID)
+#joined_data is a df with General.Groups included in order to assist with classification
+joined_data <- left_join(data.clean.rm.out,groups_data, by="StyleID")
+joined_data$General.Group
+joined_data$General.Group <- factor(joined_data$General.Group)
+
+#Finding the number of remaining NA values in each column
+colSums(is.na(joined_data))
+filtered_joined_data <- filter(joined_data, joined_data$General.Group != "Other", joined_data$General.Group != "NA")
+colSums(is.na(filtered_joined_data))
+filtered_joined_data$General.Group <- droplevels(filtered_joined_data$General.Group)
+#removing a few unnecessary columns
+filtered_joined_data <- filtered_joined_data[,-1]
+filtered_joined_data <- filtered_joined_data[,-14]
+
+##Export CSV
+write.csv(filtered_joined_data,"Filtered_Joined_Data.csv", row.names = FALSE)
+
+#Splitting Data into Training and Test Sets
+set.seed(1)
+smp_size <- floor(0.75 * nrow(filtered_joined_data))
+training_index <- sample(seq_len(nrow(filtered_joined_data)), size = smp_size)
+filtered_joined_data.train <- filtered_joined_data[training_index,] 
+filtered_joined_data.test <- filtered_joined_data[-training_index,]
+
+
+```
+
+EDA
+
+```{r}
+f1r<-data.clean.rm.out %>% ggplot(aes(y=G.Change))+
+  geom_boxplot(fill=primary_col[2])+
+  theme_gt()+
+  theme(legend.position = "none")
+f2r<-data.clean.rm.out %>% ggplot(aes(y=ABV))+
+  geom_boxplot(fill=primary_col[2])+
+  theme_gt()+
+  theme(legend.position = "none")
+f3r<-data.clean.rm.out %>% ggplot(aes(y=Color))+
+  geom_boxplot(fill=primary_col[2])+
+  theme_gt()+
+  theme(legend.position = "none")
+f4r<-data.clean.rm.out %>% ggplot(aes(y=IBU))+
+  geom_boxplot(fill=primary_col[2])+
+  theme_gt()+
+  theme(legend.position = "none")
+f5r<-data.clean.rm.out %>% ggplot(aes(y=Size.Change))+
+  geom_boxplot(fill=primary_col[2])+
+  theme_gt()+
+  theme(legend.position = "none")
+f6r<-data.clean.rm.out %>% ggplot(aes(y=BoilTime))+
+  geom_boxplot(fill=primary_col[2])+
+  theme_gt()+
+  theme(legend.position = "none")
+
+ggarrange(f1r,f2r,f3r,f4r,f5r,f6r, ncol=3,nrow=2)
+ggsave("without outlier.png",width = 5, height = 4)
+
+###### NLP ######
+names <- data$Name
+numbers<- seq(1,500,1)
+numbers<-data_frame(word=as.character(numbers))
+styles<- data$Style
+styles_df <- data_frame(Text = styles) %>% unique()%>%
+  mutate(Text=as.character( Text))# tibble aka neater data frame
+styles_words <- styles_df %>% 
+  unnest_tokens(output = word, input = Text) 
+names_df <- data_frame(Text = names) %>%
+  mutate(Text=as.character( Text))# tibble aka neater data frame
+names_words <- names_df %>% 
+  unnest_tokens(output = word, input = Text) 
+names_words <- names_words %>%
+  anti_join(stop_words) %>% # Remove stop words 
+  anti_join(styles_words) %>% #Removes words in styles
+  anti_join(numbers)
+names_wordcounts <- names_words %>% count(word, sort = TRUE)
+styles_wordcounts <- styles_words  %>% count(word, sort = TRUE)
+
+head(names_wordcounts,20)
+names_wordcounts %>% 
+  filter(n > 450) %>% 
+  mutate(word = reorder(word, n)) %>% 
+  ggplot(aes(word, n)) + 
+  geom_col(fill=secondary_col[1]) +
+  coord_flip() +
+  labs(x = "Word \n", y = "\n Count ", title = "Beer Names Word Frequency",
+       subtitle = "Excluding Beer Style Words") +
+  geom_text(aes(label = n), hjust = 1.2, colour = "white", fontface = "bold") +
+  theme_gt()
+ggsave("FrequentNames.png", width = 5, height = 4)
+
+
+head(styles_wordcounts,20)
+styles_wordcounts %>% 
+  filter(n > 5) %>% 
+  mutate(word = reorder(word, n)) %>% 
+  ggplot(aes(word, n)) + 
+  geom_col(fill=secondary_col[1]) +
+  coord_flip() +
+  labs(x = "Word \n", y = "\n Count ", title = "Beer Styles Word Frequency",
+       subtitle = "Excluding Beer Style Words") +
+  geom_text(aes(label = n), hjust = 1.2, colour = "white", fontface = "bold") +
+  theme_gt()
+ggsave("FrequentNames_Styles.png", width = 5, height = 4)
+
+
+
+
+
+#######Corr Plot######
+data.cont<-data.clean %>% dplyr::select(-StyleID,-BrewMethod,-SugarScale,
+                                 -Size.L.,-OG
+                                 #-Size.Change,-G.Change
+                                 ) 
+
+
+png(height=500, width=500, file="CorrplotBrew.png", type = "cairo")
+data.cont %>% corrgram() %>% corrplot(tl.col=primary_col[1], col = c(secondary_col[4],primary_col[2]),
+                                      tl.cex=2)
+dev.off()
+```
+
+K-Means Clustering
+
+```{r}
+#######Kmeans Clustering####
+data.group<-data.clean.rm.out %>% group_by(StyleID) %>%
+  summarise(FG=median(FG),
+            ABV=median(ABV),
+            IBU=median(IBU),
+            Color=median(Color),
+            BoilTime=median(BoilTime),
+            Efficiency=median(Efficiency))
+
+data.scale<-scale(data.group[,-1])
+
+distance <- get_dist(data.scale)
+fviz_dist(distance, gradient = list(low = primary_col[2], mid = primary_col[3], high = secondary_col[4]))
+
+fviz_nbclust(data.scale, kmeans, method = "silhouette")
+k2<-kmeans(data.scale,centers = 2,nstart=25)
+fviz_cluster(k2,data = data.scale, palette=primary_col, geom = "point", ggtheme=theme_gt())
+
+
+#######Kmeans Clustering2####
+
+data.kmselect<-data.clean.rm.out %>% dplyr::select(FG,ABV,IBU,Color,BoilTime,Efficiency,Size.Change,G.Change)
+
+data.scale<-scale(data.kmselect)
+
+distance <- get_dist(data.scale)
+fviz_dist(distance, gradient = list(low = primary_col[2], mid = primary_col[3], high = secondary_col[4]))
+
+fviz_nbclust(data.scale, kmeans, method = "silhouette")
+k2<-kmeans(data.scale,centers = 2,nstart=25)
+
+png(height=500, width=500, file="Cluster.png", type = "cairo")
+fviz_cluster(k2,data = data.scale, palette=c(primary_col[2],secondary_col[4]), geom = "point", ggtheme=theme_gt())
+dev.off()
+
+#####Categories####
+data$Style
+
+cat<-data %>%select(Style,StyleID) %>% mutate(Style=tolower(Style)) ##%>% distinct() 
+cat<-cat %>% mutate(group = case_when(str_detect(Style,"stout") ~ "stout",
+                                      str_detect(Style,"ipa") ~ "ipa",
+                                      str_detect(Style,"pale ale") ~ "pale ale",
+                                      str_detect(Style,"lager") ~ "lager",
+                                      str_detect(Style,"bock") ~ "bock",
+                                      str_detect(Style,"cider") ~ "cider",
+                                      str_detect(Style,"brown ale") ~ "brown ale",
+                                      str_detect(Style,"amber") ~ "amber",
+                                      str_detect(Style,"sour") ~ "sour"))
+
+sum(!is.na(cat$group))
+```
+
+Logistic Regression and Naive Bayes
+
+```{r}
+#Logistic Regression and Naive Bayes
+
+##Logistic Regression
+
+# Fit the model
+logreg1 <- nnet::multinom(General.Group ~ABV + IBU + Color + BoilSize + BoilTime + BrewMethod + G.Change, data = filtered_joined_data.train)
+# Summarize the model
+# summary(logreg1)
+
+
+#Training Error
+pred.logreg1.train <- predict(logreg1, filtered_joined_data.train)
+mean( pred.logreg1.train != filtered_joined_data.train$General.Group)
+
+#Testing Error
+pred.logreg1.test <- predict(logreg1, filtered_joined_data.test)
+mean( pred.logreg1.test != filtered_joined_data.test$General.Group)
+
+#Confusion Matrix
+cm.logreg1 <- table(filtered_joined_data.test$General.Group, pred.logreg1.test)
+cm.logreg1
+
+confusionMatrix(cm.logreg1)
+
+log_table <- table(filtered_joined_data.test$General.Group,pred.logreg1.test)
+log_table
+
+tidy(logreg1)
+
+##Naive Bayes
+
+#Fit the model
+nb1 <- naiveBayes(filtered_joined_data.train, filtered_joined_data.train$General.Group)
+
+#Training Error
+pred.nb1.train <- predict(nb1, filtered_joined_data.train)
+mean( pred.nb1.train !=  filtered_joined_data.train$General.Group)
+
+#Testing Error
+pred.nb1.test <- predict(nb1, filtered_joined_data.test)
+mean( pred.nb1.test != filtered_joined_data.test$General.Group)
+
+#Confusion Matrix
+cm.nb1 <- table(filtered_joined_data.test$General.Group, pred.nb1.test)
+
+confusionMatrix(cm.nb1)
+
+nb1$tables$Color
+
+nb_mean_df <- c(by(filtered_joined_data.test$General.Group,filtered_joined_data.test$Color),mean)
+
+ggplot(nb1$tables$Color) + geom_boxplot(aes(color=General.Group)) + stat_summary(fun.y = mean, shape=1) + theme_gt() + labs(title="NB: ")
+
+
+ggplot(filtered_joined_data.test, aes(x= General.Group, y = Color)) + geom_boxplot(aes(color=General.Group)) + stat_summary(fun.y = mean, shape=1) + theme_gt() + labs(title="NB: ")
+ggsave("KNN_optimal.png", width = 5, height = 4)
+  
+nb1$tables
+  
+plot(nb1)
+
+plot(cm.nb1)
+```
+
+
+Decision Tree
+
+```{r}
+##### Decision Tree ###
+dTree <- rpart(General.Group~ ABV + IBU + Color + BoilSize + BoilTime + BrewMethod + G.Change, data = filtered_joined_data.train, method = "class")
+summary(dTree)
+
+dTree.train.predict <- predict(dTree, newdata = filtered_joined_data.train, type="class")
+dTree.train.Error <- mean(dTree.train.predict != filtered_joined_data.train$General.Group)
+dTree.train.Error
+rpart.plot(dTree)
+
+dTree.test.predict <- predict(dTree, newdata = filtered_joined_data.test, type="class")
+dTree.test.Error <- mean(dTree.test.predict != filtered_joined_data.test$General.Group)
+dTree.test.Error
+
+```
+
+KNN
+
+```{r}
+library(class)
+#KNN specific dataset is made with dummy variables and removal of non-essential extra variables
+filtered_joined_data_knn <- filtered_joined_data
+filtered_joined_data_knn <- filtered_joined_data_knn[,-11]
+filtered_joined_data_knn <- filtered_joined_data_knn[,-10]
+allgrain <- ifelse(filtered_joined_data$BrewMethod == "All Grain", 1, 0)
+filtered_joined_data_knn <- cbind(filtered_joined_data_knn,allgrain)
+biab <- ifelse(filtered_joined_data$BrewMethod == "BIAB", 1, 0)
+extract <- ifelse(filtered_joined_data$BrewMethod == "extract", 1, 0)
+partialmash <- ifelse(filtered_joined_data$BrewMethod == "partialmash", 1, 0)
+filtered_joined_data_knn <- cbind(filtered_joined_data_knn,biab)
+filtered_joined_data_knn <- cbind(filtered_joined_data_knn,extract)
+filtered_joined_data_knn <- cbind(filtered_joined_data_knn,partialmash)
+# filtered_joined_data_knn <- filtered_joined_data_knn[,-13]
+filtered_joined_data_knn$BoilTime <- as.numeric(filtered_joined_data_knn$BoilTime)
+
+#Splitting Data into Training and Test Sets
+set.seed(1)
+smp_size <- floor(0.75 * nrow(filtered_joined_data_knn))
+training_index <- sample(seq_len(nrow(filtered_joined_data_knn)), size = smp_size)
+filtered_joined_data_knn.train <- filtered_joined_data_knn[training_index,]
+filtered_joined_data_knn.test <- filtered_joined_data_knn[-training_index,]
+class(filtered_joined_data_knn.test)
+
+set.seed(1)
+i = 1
+k.optm = data.frame()
+for (i in 1:50){
+  knn.mod <- knn(train=filtered_joined_data_knn.train[,-12], test = filtered_joined_data_knn.test[,-12], cl=filtered_joined_data_knn.train[,12], k=i)
+  k.optm <- rbind(k.optm, c(i, 100 * sum(filtered_joined_data_knn.test[,12]==knn.mod)/NROW(filtered_joined_data_knn.test[,12])))
+  print(i)
+}
+
+k.optm$K <- k.optm[,1]
+k.optm$accuracy <- k.optm[,2]
+max_acc <- as.numeric(max(k.optm$accuracy))
+max_k <- as.numeric(k.optm[k.optm$accuracy == max_acc,]$K)
+max_k
+max_acc
+
+ggplot(k.optm, aes(x = K, y = accuracy)) + geom_point(color = primary_col[2]) + theme_gt() + labs(title="Model Accuracy vs. K values")
+ggsave("KNN_optimal.png", width = 5, height = 4)
+```
+
+LDA
+```{r}
+LDA_model <- lda(General.Group~ABV + IBU + Color + BoilSize + BoilTime + BrewMethod + G.Change, data=filtered_joined_data.train)
+LDA_pred_train <- predict(LDA_model, filtered_joined_data.train)
+mean(LDA_pred_train$class == filtered_joined_data.train$General.Group)
+LDA_pred <- predict(LDA_model, filtered_joined_data.test)
+mean(LDA_pred$class != filtered_joined_data.test$General.Group)
+#0.4783611 or 47.8% error
+
+LDA_model2 <- lda(General.Group~ABV + IBU + Color, data=filtered_joined_data.train)
+LDA_pred_train2 <- predict(LDA_model2, filtered_joined_data.train)
+mean(LDA_pred_train2$class == filtered_joined_data.train$General.Group)
+LDA_pred2 <- predict(LDA_model2, filtered_joined_data.test)
+mean(LDA_pred2$class != filtered_joined_data.test$General.Group)
+#.4788221
+
+ggplot(data = filtered_joined_data) + geom_point(aes(ABV,IBU, color = General.Group))
+ggplot(data = filtered_joined_data) + geom_point(aes(ABV,Color, color = General.Group))
+ggplot(data = filtered_joined_data) + geom_point(aes(Color, IBU, color= General.Group))
+ggplot(data = filtered_joined_data.test) + geom_point(aes(Color, IBU, color = LDA_pred$class)) + theme_gt()
+ggsave("LDA_pred.png",width = 5, height = 4)
+ggplot(data = filtered_joined_data.test) + geom_point(aes(Color, IBU, color = General.Group)) + theme_gt()
+ggsave("LDA_test.png",width = 5, height = 4)
+
+# lda_projection <- cbind(scale(as.matrix(filtered_joined_data.test[,-14]),scale=FALSE))
+# lda_plot <- ggplot(data=)
+# plot(LDA_Model2)
+
+#QQ Plots of Data 
+qqnorm(filtered_joined_data$Color)
+qqnorm(filtered_joined_data$ABV)
+```
+
+Random Forest
+
+```{r}
+##### Random Forest ###
+
+set.seed(1)
+filtered_joined_data.rf = randomForest(formula = General.Group ~ ABV + IBU + Color + BoilSize + BoilTime + BrewMethod + G.Change, data=filtered_joined_data.train, importance =TRUE)
+filtered_joined_data.rf
+predforest <- predict(filtered_joined_data.rf, newdata = filtered_joined_data.test, type="class")
+test_error_forest <- mean(predforest != filtered_joined_data.test$General.Group)
+test_error_forest
+importance(filtered_joined_data.rf)
+filtered_joined_data.rf$importance
+#0.3898461 error
+
+rfplotdf <- pivot_longer(data.frame(ntrees=1:nrow(filtered_joined_data.rf$err.rate),filtered_joined_data.rf$err.rate),-ntrees)
+ggplot(rfplotdf, aes(x=ntrees,y=value,col=name)) + geom_line() + geom_dl(aes(label=name),method = list(dl.trans(x = x - 1, y = y-.15),"last.points")) + geom_dl(aes(label=name),method = list(dl.trans(x = x - 2.5, y= y-.15),"first.points")) + theme_gt() + labs(title="RF: MSE against Number of Trees")
+ggsave("randomforest.png",width = 5, height = 4)
+
+plot(varImpPlot(filtered_joined_data.rf))
+    
+set.seed(1)
+filtered_joined_data.rf2 = randomForest(formula = General.Group ~ ABV + IBU + Color, data=filtered_joined_data.train, importance =TRUE)
+filtered_joined_data.rf2
+predforest2 <- predict(filtered_joined_data.rf2, newdata = filtered_joined_data.test, type="class")
+test_error_forest2 <- mean(predforest2 != filtered_joined_data.test$General.Group)
+test_error_forest2
+#0.4077105 error
+```
+
+```{r}
+# #Boosting
+filtered_joined_data.gbm <- gbm(General.Group ~ ABV + IBU + Color + BoilSize + BoilTime + BrewMethod + G.Change, data = filtered_joined_data, distribution = "gaussian", n.trees= 5000, shrinkage = 0.01, interaction.depth = 1, cv.folds = 10)
+summary(filtered_joined_data.gbm)
+filtered_joined_data.gbm
+summary.gbm(filtered_joined_data.gbm)
+
+filtered_joined_data.test.pred = predict(filtered_joined_data.gbm, newdata = filtered_joined_data.test)
+table(filtered_joined_data.test.pred, filtered_joined_data.test$General.Group)
+test_error_boost <- mean(filtered_joined_data.test.pred != filtered_joined_data.test$General.Group)
+test_error_boost
+```
+
+Neural Network
+```{r}
+#creating NN specific data as dataframes and with all values numeric
+nn_data.train <- as.data.frame(filtered_joined_data.train[,-15])
+nn_data.train <- as.data.frame(nn_data.train[,-11])
+nn_data.train <- as.data.frame(nn_data.train[,-1])
+nn_data.train <- as.data.frame(nn_data.train[,-10])
+#encoding General Group as new variables (dummy variables)
+
+#levels(nn_data.train$General.Group)
+#[1] "Belgian-Style Ale" "Brown Ale"         "Cider"             "Dark Lager"        "German Bock"       "IPA"              
+# [7] "Pale Ale"          "Pilsner"           "Porter"            "Stout"             "Wheat"             "Wild & Sour Ale" 
+
+nn_data.train <- cbind(nn_data.train[1:11], class.ind(as.factor(nn_data.train$General.Group)))
+#setting new names
+names(nn_data.train) <- c(names(nn_data.train)[1:11], "BelgianStyleAle", "BrownAle", "Cider", "DarkLager", "GermanBock", "IPA", "PaleAle", "Pilsner", "Porter", "Stout", "Wheat", "WildSourAle")
+
+#scale
+scl <- function(x) { (x - min(x))/(max(x)-min(x))}
+nn_data.train[,1:23] <- data.frame(lapply(nn_data.train[, 1:23], scl))
+
+
+beer_names <- names(nn_data.train)[12:23]
+beer_names
+nn_data.test <- as.data.frame(filtered_joined_data.test[,-15])
+nn_data.test <- as.data.frame(nn_data.test[,-11])
+nn_data.test <- as.data.frame(nn_data.test[,-1])
+nn_data.test <- as.data.frame(nn_data.test[,-10])
+nn_data.test$General.Group <- as.numeric(nn_data.test$General.Group)
+
+
+nn=neuralnet(BelgianStyleAle+BrownAle+Cider+DarkLager+GermanBock+IPA+PaleAle+Pilsner+Porter+Stout+Wheat+WildSourAle  ~ ABV + OG + FG + IBU + Color + BoilSize, data=nn_data.train, hidden=c(24, 12), act.fct="logistic", linear.output = FALSE, lifesign = "minimal")
+#+ OG + FG + IBU + Color + BoilSize
+plot(nn)
+
+nn_data.train.prediction <- compute(nn, nn_data.train[, 1:11])
+head(nn_data.train.prediction)
+
+```
+SVM
+
+```{r}
+set.seed(1)
+svm1 <- svm(General.Group ~ ABV + IBU + Color + BoilSize + BoilTime + BrewMethod + G.Change, data=filtered_joined_data.train, method="c-classification", kernel="radial", gamma=0.1, cost=10)
+summary(svm1)
+
+# train error
+pred_train1 <- predict(svm1, filtered_joined_data.train, type="response")
+train_err1 <- mean(pred_train1 != filtered_joined_data.train$General.Group)
+train_err1
+# 0.4312196
+
+# test error
+pred_test1 <- predict(svm1, filtered_joined_data.test, type="response")
+test_err1 <- mean(pred_test1 != filtered_joined_data.test$General.Group)
+test_err1
+# 0.4274765
+
+svm1
+plot(svm1, filtered_joined_data.test, ABV ~ IBU,slice=list(Color=3, BoilSize=4, BoilTime=5, BrewMethod=6,G.Change=7))
+```
+
